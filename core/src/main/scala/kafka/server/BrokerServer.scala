@@ -277,7 +277,8 @@ class BrokerServer(
         brokerTopicStats = brokerTopicStats,
         isShuttingDown = isShuttingDown,
         zkClient = None,
-        threadNamePrefix = threadNamePrefix)
+        threadNamePrefix = threadNamePrefix,
+        brokerEpochSupplier = () => lifecycleManager.brokerEpoch)
 
       /* start token manager */
       if (config.tokenAuthEnabled) {
