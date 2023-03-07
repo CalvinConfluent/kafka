@@ -974,7 +974,7 @@ public final class RaftClientTestContext {
         assertEquals(epoch, fetchPartition.currentLeaderEpoch());
         assertEquals(fetchOffset, fetchPartition.fetchOffset());
         assertEquals(lastFetchedEpoch, fetchPartition.lastFetchedEpoch());
-        assertEquals(localId.orElse(-1), request.replicaId());
+        assertEquals(localId.orElse(-1), request.replicaState().replicaId());
     }
 
     FetchRequestData fetchRequest(
