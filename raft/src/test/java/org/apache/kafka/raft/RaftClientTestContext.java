@@ -1011,7 +1011,7 @@ public final class RaftClientTestContext {
         return request
             .setMaxWaitMs(maxWaitTimeMs)
             .setClusterId(clusterId)
-            .setReplicaId(replicaId);
+            .setReplicaState(new FetchRequestData.ReplicaState().setReplicaId(replicaId));
     }
 
     FetchResponseData fetchResponse(
