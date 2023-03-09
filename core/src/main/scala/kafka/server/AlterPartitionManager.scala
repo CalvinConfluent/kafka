@@ -304,10 +304,8 @@ class DefaultAlterPartitionManager(
       items.foreach { item =>
         val newIsrWithBrokerEpoch = new ListBuffer[BrokerState]()
         item.leaderAndIsr.isr.foreach(isrBrokerId => {
-          var currentBrokerEpoch = brokerEpochs.getOrDefault(isrBrokerId, -2)
-          if (isrBrokerId == brokerId) {
-            currentBrokerEpoch = brokerEpoch
-          }
+          val currentBrokerEpoch =
+            if (isrBrokerId == brokerId) brokerEpoch else brokerEpochs.getOrDefault(isrBrokerId, -2)
 
           if (isBrokerEpochConsistentWithMetadataCache(isrBrokerId, currentBrokerEpoch)) {
             newIsrWithBrokerEpoch.append(new BrokerState()
