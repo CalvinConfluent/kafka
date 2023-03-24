@@ -2381,7 +2381,7 @@ public class ReplicationControlManagerTest {
         assertEquals(expectedRecords, result.records());
     }
 
-    private static BrokerState getBrokerState(int brokerId, Long brokerEpoch) {
+    private static BrokerState brokerState(int brokerId, Long brokerEpoch) {
         return new BrokerState().setBrokerId(brokerId).setBrokerEpoch(brokerEpoch);
     }
 
@@ -2390,7 +2390,7 @@ public class ReplicationControlManagerTest {
     }
 
     private static List<BrokerState> generateIsrWithTestDefaultEpoch(List<Integer> isr) {
-        return isr.stream().map(brokerId -> getBrokerState(brokerId, generateTestDefaultBrokerEpoch(brokerId)))
+        return isr.stream().map(brokerId -> brokerState(brokerId, generateTestDefaultBrokerEpoch(brokerId)))
             .collect(Collectors.toList());
     }
 }
