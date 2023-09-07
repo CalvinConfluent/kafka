@@ -1254,7 +1254,7 @@ public class ReplicationControlManager {
     /**
      * Generate the appropriate records to handle a broker being fenced.
      *
-     * First, we remove this broker from any non-singleton ISR. Then we generate a
+     * First, we remove this broker from any ISR. Then we generate a
      * FenceBrokerRecord.
      *
      * @param brokerId      The broker id.
@@ -1282,7 +1282,7 @@ public class ReplicationControlManager {
     /**
      * Generate the appropriate records to handle a broker being unregistered.
      *
-     * First, we remove this broker from any non-singleton ISR. Then we generate an
+     * First, we remove this broker from any ISR. Then we generate an
      * UnregisterBrokerRecord.
      *
      * @param brokerId      The broker id.
@@ -1327,7 +1327,7 @@ public class ReplicationControlManager {
      * Generate the appropriate records to handle a broker starting a controlled shutdown.
      *
      * First, we create an BrokerRegistrationChangeRecord. Then, we remove this broker
-     * from any non-singleton ISR and elect new leaders for partitions led by this
+     * from any ISR and elect new leaders for partitions led by this
      * broker.
      *
      * @param brokerId      The broker id.
