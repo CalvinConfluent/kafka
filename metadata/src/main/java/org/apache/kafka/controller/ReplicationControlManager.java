@@ -77,6 +77,7 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.AlterPartitionRequest;
 import org.apache.kafka.common.requests.ApiError;
 import org.apache.kafka.common.utils.LogContext;
+import org.apache.kafka.controller.BrokersToIsrs.PartitionsOnReplicaIteratorChain;
 import org.apache.kafka.metadata.BrokerHeartbeatReply;
 import org.apache.kafka.metadata.BrokerRegistration;
 import org.apache.kafka.metadata.BrokerRegistrationFencingChange;
@@ -101,6 +102,7 @@ import org.slf4j.Logger;
 
 import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -363,6 +365,11 @@ public class ReplicationControlManager {
     private final BrokersToIsrs brokersToIsrs;
 
     /**
+     * A map of broker IDs to the partitions that the broker is in the ELR for.
+     */
+    private final BrokersToElrs brokersToElrs;
+
+    /**
      * A map from topic IDs to the partitions in the topic which are reassigning.
      */
     private final TimelineHashMap<Uuid, int[]> reassigningTopics;
@@ -405,6 +412,7 @@ public class ReplicationControlManager {
         this.topicsWithCollisionChars = new TimelineHashMap<>(snapshotRegistry, 0);
         this.topics = new TimelineHashMap<>(snapshotRegistry, 0);
         this.brokersToIsrs = new BrokersToIsrs(snapshotRegistry);
+        this.brokersToElrs = new BrokersToElrs(snapshotRegistry);
         this.reassigningTopics = new TimelineHashMap<>(snapshotRegistry, 0);
         this.imbalancedPartitions = new TimelineHashSet<>(snapshotRegistry, 0);
     }
@@ -453,6 +461,7 @@ public class ReplicationControlManager {
             topicInfo.parts.put(record.partitionId(), newPartInfo);
             brokersToIsrs.update(record.topicId(), record.partitionId(), null,
                 newPartInfo.isr, NO_LEADER, newPartInfo.leader);
+            brokersToElrs.update(record.topicId(), record.partitionId(), null, newPartInfo.elr);
             updateReassigningTopicsIfNeeded(record.topicId(), record.partitionId(),
                     false,  isReassignmentInProgress(newPartInfo));
         } else if (!newPartInfo.equals(prevPartInfo)) {
@@ -462,6 +471,8 @@ public class ReplicationControlManager {
             topicInfo.parts.put(record.partitionId(), newPartInfo);
             brokersToIsrs.update(record.topicId(), record.partitionId(), prevPartInfo.isr,
                 newPartInfo.isr, prevPartInfo.leader, newPartInfo.leader);
+            brokersToElrs.update(record.topicId(), record.partitionId(), prevPartInfo.elr,
+                newPartInfo.elr);
             updateReassigningTopicsIfNeeded(record.topicId(), record.partitionId(),
                     isReassignmentInProgress(prevPartInfo), isReassignmentInProgress(newPartInfo));
         }
@@ -509,6 +520,7 @@ public class ReplicationControlManager {
         brokersToIsrs.update(record.topicId(), record.partitionId(),
             prevPartitionInfo.isr, newPartitionInfo.isr, prevPartitionInfo.leader,
             newPartitionInfo.leader);
+        brokersToElrs.update(record.topicId(), record.partitionId(), prevPartitionInfo.elr, newPartitionInfo.elr);
         String topicPart = topicInfo.name + "-" + record.partitionId() + " with topic ID " +
             record.topicId();
         newPartitionInfo.maybeLogPartitionChange(log, topicPart, prevPartitionInfo);
@@ -556,6 +568,7 @@ public class ReplicationControlManager {
             // Remove the entries for this topic in brokersToIsrs.
             for (int i = 0; i < partition.isr.length; i++) {
                 brokersToIsrs.removeTopicEntryForBroker(topic.id, partition.isr[i]);
+                brokersToElrs.removeTopicEntryForBroker(topic.id, partition.isr[i]);
             }
 
             imbalancedPartitions.remove(new TopicIdPartition(record.topicId(), partitionId));
@@ -1265,7 +1278,7 @@ public class ReplicationControlManager {
         if (brokerRegistration == null) {
             throw new RuntimeException("Can't find broker registration for broker " + brokerId);
         }
-        generateLeaderAndIsrUpdates("handleBrokerFenced", brokerId, NO_LEADER, records,
+        generateLeaderAndIsrUpdates("handleBrokerFenced", brokerId, NO_LEADER, NO_LEADER, records,
             brokersToIsrs.partitionsWithBrokerInIsr(brokerId));
         if (featureControl.metadataVersion().isBrokerRegistrationChangeRecordSupported()) {
             records.add(new ApiMessageAndVersion(new BrokerRegistrationChangeRecord().
@@ -1282,7 +1295,7 @@ public class ReplicationControlManager {
     /**
      * Generate the appropriate records to handle a broker being unregistered.
      *
-     * First, we remove this broker from any ISR. Then we generate an
+     * First, we remove this broker from any ISR or ELR. Then we generate an
      * UnregisterBrokerRecord.
      *
      * @param brokerId      The broker id.
@@ -1291,8 +1304,11 @@ public class ReplicationControlManager {
      */
     void handleBrokerUnregistered(int brokerId, long brokerEpoch,
                                   List<ApiMessageAndVersion> records) {
-        generateLeaderAndIsrUpdates("handleBrokerUnregistered", brokerId, NO_LEADER, records,
-            brokersToIsrs.partitionsWithBrokerInIsr(brokerId));
+        generateLeaderAndIsrUpdates("handleBrokerUnregistered", brokerId, NO_LEADER, NO_LEADER, records,
+            new PartitionsOnReplicaIteratorChain(Arrays.asList(
+                brokersToIsrs.partitionsWithBrokerInIsr(brokerId),
+                brokersToElrs.partitionsWithBrokerInElr(brokerId))
+            .iterator()));
         records.add(new ApiMessageAndVersion(new UnregisterBrokerRecord().
             setBrokerId(brokerId).setBrokerEpoch(brokerEpoch),
             (short) 0));
@@ -1319,7 +1335,7 @@ public class ReplicationControlManager {
             records.add(new ApiMessageAndVersion(new UnfenceBrokerRecord().setId(brokerId).
                 setEpoch(brokerEpoch), (short) 0));
         }
-        generateLeaderAndIsrUpdates("handleBrokerUnfenced", NO_LEADER, brokerId, records,
+        generateLeaderAndIsrUpdates("handleBrokerUnfenced", NO_LEADER, brokerId, NO_LEADER, records,
             brokersToIsrs.partitionsWithNoLeader());
     }
 
@@ -1343,7 +1359,23 @@ public class ReplicationControlManager {
                 (short) 1));
         }
         generateLeaderAndIsrUpdates("enterControlledShutdown[" + brokerId + "]",
-            brokerId, NO_LEADER, records, brokersToIsrs.partitionsWithBrokerInIsr(brokerId));
+            brokerId, NO_LEADER, NO_LEADER, records, brokersToIsrs.partitionsWithBrokerInIsr(brokerId));
+    }
+
+    /**
+     * Generate the appropriate records to handle a broker registering after unclean shutdown.
+     *
+     * Create partition change records to kick out the replicas from any ISR or ELR.
+     *
+     * @param brokerId      The broker id.
+     * @param records       The record list to append to.
+     */
+    void handleBrokerUncleanShutdown(int brokerId, List<ApiMessageAndVersion> records) {
+        generateLeaderAndIsrUpdates("handleBrokerUncleanShutdown", NO_LEADER, NO_LEADER, brokerId, records,
+            new PartitionsOnReplicaIteratorChain(Arrays.asList(
+                brokersToIsrs.partitionsWithBrokerInIsr(brokerId),
+                brokersToElrs.partitionsWithBrokerInElr(brokerId))
+            .iterator()));
     }
 
     ControllerResult<ElectLeadersResponseData> electLeaders(ElectLeadersRequestData request) {
@@ -1744,12 +1776,17 @@ public class ReplicationControlManager {
      *                          broker to remove from the ISR and leadership, otherwise.
      * @param brokerToAdd       NO_LEADER if no broker is being added; the ID of the
      *                          broker which is now eligible to be a leader, otherwise.
+     * @param brokerWithUncleanShutdown
+     *                          NO_LEADER if no broker has unclean shutdown; the ID of the
+     *                          broker which is now removed from the ISR, ELR and
+     *                          leadership, otherwise.
      * @param records           A list of records which we will append to.
      * @param iterator          The iterator containing the partitions to examine.
      */
     void generateLeaderAndIsrUpdates(String context,
                                      int brokerToRemove,
                                      int brokerToAdd,
+                                     int brokerWithUncleanShutdown,
                                      List<ApiMessageAndVersion> records,
                                      Iterator<TopicIdPartition> iterator) {
         int oldSize = records.size();
@@ -1767,7 +1804,8 @@ public class ReplicationControlManager {
         // where there is an unclean leader election which chooses a leader from outside
         // the ISR.
         IntPredicate isAcceptableLeader =
-            r -> (r != brokerToRemove) && (r == brokerToAdd || clusterControl.isActive(r));
+            r -> (r != brokerToRemove && r != brokerWithUncleanShutdown)
+                && (r == brokerToAdd || clusterControl.isActive(r));
 
         while (iterator.hasNext()) {
             TopicIdPartition topicIdPart = iterator.next();
@@ -1794,11 +1832,14 @@ public class ReplicationControlManager {
             if (configurationControl.uncleanLeaderElectionEnabledForTopic(topic.name)) {
                 builder.setElection(PartitionChangeBuilder.Election.UNCLEAN);
             }
+            if (brokerWithUncleanShutdown != NO_LEADER) {
+                builder.setUncleanShutdownReplicas(Arrays.asList(brokerWithUncleanShutdown));
+            }
 
-            // Note: if brokerToRemove was passed as NO_LEADER, this is a no-op (the new
+            // Note: if brokerToRemove and brokerWithUncleanShutdown were passed as NO_LEADER, this is a no-op (the new
             // target ISR will be the same as the old one).
             builder.setTargetIsr(Replicas.toList(
-                Replicas.copyWithout(partition.isr, brokerToRemove)));
+                Replicas.copyWithout(partition.isr, new int[] {brokerToRemove, brokerWithUncleanShutdown})));
 
             builder.build().ifPresent(records::add);
         }

@@ -356,6 +356,14 @@ public class ReplicationControlManagerTest {
             }
         }
 
+        void handleBrokersUncleanShutdown(Integer... brokerIds) throws Exception {
+            List<ApiMessageAndVersion> records = new ArrayList<>();
+            for (int brokerId : brokerIds) {
+                replicationControl.handleBrokerUncleanShutdown(brokerId, records);
+            }
+            replay(records);
+        }
+
         void alterPartition(
             TopicIdPartition topicIdPartition,
             int leaderId,
@@ -1010,6 +1018,30 @@ public class ReplicationControlManagerTest {
         assertTrue(Arrays.equals(new int[]{2}, partition.isr), partition.toString());
         assertEquals(2, partition.leader, partition.toString());
         assertTrue(Arrays.equals(new int[]{}, partition.lastKnownElr), partition.toString());
+    }
+
+    public void testEligibleLeaderReplicas_UncleanShutdown() throws Exception {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        ctx.registerBrokers(0, 1, 2, 3);
+        ctx.unfenceBrokers(0, 1, 2, 3);
+        CreatableTopicResult createTopicResult = ctx.createTestTopic("foo",
+                new int[][] {new int[] {0, 1, 2, 3}});
+
+        TopicIdPartition topicIdPartition = new TopicIdPartition(createTopicResult.topicId(), 0);
+        assertEquals(OptionalInt.of(0), ctx.currentLeader(topicIdPartition));
+        ctx.alterTopicConfig("foo", TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "3");
+
+        ctx.fenceBrokers(Utils.mkSet(1, 2, 3));
+
+        PartitionRegistration partition = replicationControl.getPartition(topicIdPartition.topicId(), topicIdPartition.partitionId());
+        assertTrue(Arrays.equals(new int[]{2, 3}, partition.elr), partition.toString());
+        assertTrue(Arrays.equals(new int[]{}, partition.lastKnownElr), partition.toString());
+
+        ctx.handleBrokersUncleanShutdown(3);
+        partition = replicationControl.getPartition(topicIdPartition.topicId(), topicIdPartition.partitionId());
+        assertTrue(Arrays.equals(new int[]{2}, partition.elr), partition.toString());
+        assertTrue(Arrays.equals(new int[]{3}, partition.lastKnownElr), partition.toString());
     }
 
     @ParameterizedTest
