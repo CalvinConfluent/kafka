@@ -311,8 +311,8 @@ public class PartitionRegistration {
             setLeaderEpoch(leaderEpoch).
             setPartitionEpoch(partitionEpoch);
         if (version > 0) {
-            record.setEligibleLeaderReplicas(Replicas.toList(elr)).
-                setLastKnownELR(Replicas.toList(lastKnownElr));
+            if (elr.length > 0) record.setEligibleLeaderReplicas(Replicas.toList(elr));
+            if (lastKnownElr.length > 0) record.setLastKnownELR(Replicas.toList(lastKnownElr));
         }
         return new ApiMessageAndVersion(record, version);
     }
