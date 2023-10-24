@@ -388,7 +388,7 @@ public enum Errors {
     MISMATCHED_ENDPOINT_TYPE(114, "The request was sent to an endpoint of the wrong type.", MismatchedEndpointTypeException::new),
     UNSUPPORTED_ENDPOINT_TYPE(115, "This endpoint type is not supported yet.", UnsupportedEndpointTypeException::new),
     UNKNOWN_CONTROLLER_ID(116, "This controller ID is not known.", UnknownControllerIdException::new),
-    REQUEST_LIMIT_REACHED(117, "The request has reached the limit.",RequestLimitReachedException::new);
+    REQUEST_LIMIT_REACHED(117, "The request has reached the limit.", RequestLimitReachedException::new);
 
     private static final Logger log = LoggerFactory.getLogger(Errors.class);
 

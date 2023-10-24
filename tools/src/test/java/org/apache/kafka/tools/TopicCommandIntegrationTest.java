@@ -614,6 +614,23 @@ public class TopicCommandIntegrationTest extends kafka.integration.KafkaServerTe
     }
 
     @ParameterizedTest(name = ToolsTestUtils.TEST_WITH_PARAMETERIZED_QUORUM_NAME)
+    @ValueSource(strings = {"kraft"})
+    public void testDescribeWithDescribeTopicsApi(String quorum) throws ExecutionException, InterruptedException {
+        adminClient.createTopics(
+                Collections.singletonList(new NewTopic(testTopicName, 3, (short) 2))).all().get();
+        waitForTopicCreated(testTopicName);
+        String secondTopicName = "test-2";
+        adminClient.createTopics(
+                Collections.singletonList(new NewTopic(secondTopicName, 3, (short) 2))).all().get();
+        waitForTopicCreated(secondTopicName);
+
+        String output = captureDescribeTopicStandardOut(buildTopicCommandOptionsWithBootstrap(
+            "--describe", "--use-describe-topics-api"));
+        String[] rows = output.split("\n");
+        assertEquals(8, rows.length);
+    }
+
+    @ParameterizedTest(name = ToolsTestUtils.TEST_WITH_PARAMETERIZED_QUORUM_NAME)
     @ValueSource(strings = {"zk", "kraft"})
     public void testDescribeWhenTopicDoesntExist(String quorum) {
         assertThrows(IllegalArgumentException.class,

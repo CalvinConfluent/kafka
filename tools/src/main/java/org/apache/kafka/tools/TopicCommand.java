@@ -28,6 +28,7 @@ import org.apache.kafka.clients.admin.CreatePartitionsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.DeleteTopicsOptions;
+import org.apache.kafka.clients.admin.DescribeTopicsOptions;
 import org.apache.kafka.clients.admin.ListTopicsOptions;
 import org.apache.kafka.clients.admin.ListTopicsResult;
 import org.apache.kafka.clients.admin.NewPartitions;
@@ -349,7 +350,7 @@ public abstract class TopicCommand {
             return !hasLeader() || !liveBrokers.contains(info.leader().id());
         }
 
-        public void printDescription() {
+        public void printDescription(boolean printElr) {
             System.out.print("\tTopic: " + topic);
             System.out.print("\tPartition: " + info.partition());
             System.out.print("\tLeader: " + (hasLeader() ? info.leader().id() : "none"));
@@ -365,6 +366,14 @@ public abstract class TopicCommand {
                     .collect(Collectors.joining(",")));
                 System.out.print("\tRemoving Replicas: " + reassignment.removingReplicas().stream()
                     .map(node -> node.toString())
+                    .collect(Collectors.joining(",")));
+            }
+            if (printElr) {
+                System.out.print("\tElr: " + info.elr().stream()
+                    .map(node -> Integer.toString(node.id()))
+                    .collect(Collectors.joining(",")));
+                System.out.print("\tLastKnownElr: " + info.lastKnownElr().stream()
+                    .map(node -> Integer.toString(node.id()))
                     .collect(Collectors.joining(",")));
             }
             System.out.print(markedForDeletion ? "\tMarkedForDeletion: true" : "");
@@ -414,7 +423,7 @@ public abstract class TopicCommand {
 
         public void maybePrintPartitionDescription(PartitionDescription desc) {
             if (shouldPrintTopicPartition(desc)) {
-                desc.printDescription();
+                desc.printDescription(opts.useDescribeTopicsApi());
             }
         }
     }
@@ -568,7 +577,8 @@ public abstract class TopicCommand {
 
             if (!topics.isEmpty()) {
                 Map<String, org.apache.kafka.clients.admin.TopicDescription> descTopics =
-                    adminClient.describeTopics(TopicCollection.ofTopicNames(topics)).allTopicNames().get();
+                    adminClient.describeTopics(TopicCollection.ofTopicNames(topics),
+                        new DescribeTopicsOptions().useDescribeTopicsApi(opts.useDescribeTopicsApi())).allTopicNames().get();
                 topicDescriptions = new ArrayList<>(descTopics.values());
             }
 
@@ -716,6 +726,8 @@ public abstract class TopicCommand {
 
         private final OptionSpecBuilder excludeInternalTopicOpt;
 
+        private final OptionSpecBuilder useDescribeTopicsApiOpt;
+
         private final Set<OptionSpec<?>> allTopicLevelOpts;
 
         private final Set<OptionSpecBuilder> allReplicationReportOpts;
@@ -799,6 +811,8 @@ public abstract class TopicCommand {
                 "if set when creating topics, the action will only execute if the topic does not already exist.");
             excludeInternalTopicOpt = parser.accepts("exclude-internal",
                 "exclude internal topics when running list or describe command. The internal topics will be listed by default");
+            useDescribeTopicsApiOpt = parser.accepts("use-describe-topics-api",
+                    "whether use the DescribeTopics API to describe topics. if false, use Metadata API.");
             options = parser.parse(args);
 
             allTopicLevelOpts = new HashSet<>(Arrays.asList(alterOpt, createOpt, describeOpt, listOpt, deleteOpt));
@@ -916,6 +930,10 @@ public abstract class TopicCommand {
 
         public Boolean excludeInternalTopics() {
             return has(excludeInternalTopicOpt);
+        }
+
+        public Boolean useDescribeTopicsApi() {
+            return has(useDescribeTopicsApiOpt);
         }
 
         public Optional<List<String>> topicConfig() {

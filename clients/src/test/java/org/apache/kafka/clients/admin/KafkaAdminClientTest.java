@@ -103,6 +103,10 @@ import org.apache.kafka.common.message.DescribeLogDirsResponseData;
 import org.apache.kafka.common.message.DescribeLogDirsResponseData.DescribeLogDirsTopic;
 import org.apache.kafka.common.message.DescribeProducersResponseData;
 import org.apache.kafka.common.message.DescribeQuorumResponseData;
+import org.apache.kafka.common.message.DescribeTopicsRequestData;
+import org.apache.kafka.common.message.DescribeTopicsResponseData;
+import org.apache.kafka.common.message.DescribeTopicsResponseData.DescribeTopicsResponseTopic;
+import org.apache.kafka.common.message.DescribeTopicsResponseData.DescribeTopicsResponsePartition;
 import org.apache.kafka.common.message.DescribeTransactionsResponseData;
 import org.apache.kafka.common.message.DescribeUserScramCredentialsResponseData;
 import org.apache.kafka.common.message.DescribeUserScramCredentialsResponseData.CredentialInfo;
@@ -170,6 +174,7 @@ import org.apache.kafka.common.requests.DescribeProducersRequest;
 import org.apache.kafka.common.requests.DescribeProducersResponse;
 import org.apache.kafka.common.requests.DescribeQuorumRequest;
 import org.apache.kafka.common.requests.DescribeQuorumResponse;
+import org.apache.kafka.common.requests.DescribeTopicsResponse;
 import org.apache.kafka.common.requests.DescribeTransactionsRequest;
 import org.apache.kafka.common.requests.DescribeTransactionsResponse;
 import org.apache.kafka.common.requests.DescribeUserScramCredentialsResponse;
@@ -1384,6 +1389,97 @@ public class KafkaAdminClientTest {
                 TestUtils.assertFutureError(createFutures .get(sillyTopicName), InvalidTopicException.class);
             }
             assertEquals(0, env.kafkaClient().inFlightRequestCount());
+        }
+    }
+
+    @SuppressWarnings("NPathComplexity")
+    @Test
+    public void testDescribeTopicsWithDescribeTopicsApi() {
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            String topicName0 = "test-0";
+            String topicName1 = "test-1";
+            Map<String, Uuid> topics = new HashMap<>();
+            topics.put(topicName0, Uuid.randomUuid());
+            topics.put(topicName1, Uuid.randomUuid());
+
+            DescribeTopicsResponseData dataFirstPart = new DescribeTopicsResponseData();
+            dataFirstPart.topics().add(new DescribeTopicsResponseTopic()
+                .setErrorCode((short) 0)
+                .setTopicId(topics.get(topicName0))
+                .setName(topicName0)
+                .setIsInternal(false)
+                .setPartitions(Arrays.asList(new DescribeTopicsResponsePartition()
+                    .setIsrNodes(Arrays.asList(0))
+                    .setErrorCode((short) 0)
+                    .setLeaderEpoch(0)
+                    .setLeaderId(0)
+                    .setEligibleLeaderReplicas(Arrays.asList(1))
+                    .setLastKnownELR(Arrays.asList(2))
+                    .setPartitionIndex(0)
+                    .setReplicaNodes(Arrays.asList(0, 1, 2))))
+                .setNextPartition(1));
+            dataFirstPart.topics().add(new DescribeTopicsResponseTopic()
+                    .setErrorCode((short) 117)
+                    .setTopicId(topics.get(topicName0))
+                    .setName(topicName0)
+                    .setIsInternal(false));
+            env.kafkaClient().prepareResponse(body -> {
+                DescribeTopicsRequestData request = (DescribeTopicsRequestData) body.data();
+                if (request.topics().size() != 2) return false;
+                if (!request.topics().get(0).name().equals(topicName0) || request.topics().get(0).firstPartitionId() != 0) return false;
+                if (!request.topics().get(1).name().equals(topicName1) || request.topics().get(1).firstPartitionId() != 0) return false;
+                return true;
+            }, new DescribeTopicsResponse(dataFirstPart));
+
+            DescribeTopicsResponseData dataSecondPart = new DescribeTopicsResponseData();
+            dataFirstPart.topics().add(new DescribeTopicsResponseTopic()
+                .setErrorCode((short) 0)
+                .setTopicId(topics.get(topicName0))
+                .setName(topicName0)
+                .setIsInternal(false)
+                .setPartitions(Arrays.asList(new DescribeTopicsResponsePartition()
+                    .setIsrNodes(Arrays.asList(0))
+                    .setErrorCode((short) 0)
+                    .setLeaderEpoch(0)
+                    .setLeaderId(0)
+                    .setEligibleLeaderReplicas(Arrays.asList(1))
+                    .setLastKnownELR(Arrays.asList(2))
+                    .setPartitionIndex(1)
+                    .setReplicaNodes(Arrays.asList(0, 1, 2)))));
+            dataFirstPart.topics().add(new DescribeTopicsResponseTopic()
+                .setErrorCode((short) 0)
+                .setTopicId(topics.get(topicName1))
+                .setName(topicName1)
+                .setIsInternal(false)
+                .setPartitions(Arrays.asList(new DescribeTopicsResponsePartition()
+                    .setIsrNodes(Arrays.asList(3))
+                    .setErrorCode((short) 0)
+                    .setLeaderEpoch(0)
+                    .setLeaderId(3)
+                    .setEligibleLeaderReplicas(Arrays.asList(1))
+                    .setLastKnownELR(Arrays.asList(2))
+                    .setPartitionIndex(0)
+                    .setReplicaNodes(Arrays.asList(3, 1, 2)))));
+            env.kafkaClient().prepareResponse(body -> {
+                DescribeTopicsRequestData request = (DescribeTopicsRequestData) body.data();
+                if (request.topics().size() != 2) return false;
+                if (!request.topics().get(0).name().equals(topicName0) || request.topics().get(0).firstPartitionId() != 1) return false;
+                if (!request.topics().get(1).name().equals(topicName1) || request.topics().get(1).firstPartitionId() != 0) return false;
+                return true;
+            }, new DescribeTopicsResponse(dataSecondPart));
+            try {
+                DescribeTopicsResult result = env.adminClient().describeTopics(Arrays.asList(topicName0, topicName1), new DescribeTopicsOptions().useDescribeTopicsApi(true));
+                Map<String, TopicDescription> topicDescriptions = result.allTopicNames().get();
+                assertEquals(2, topicDescriptions.size());
+                TopicDescription topicDescription = topicDescriptions.get(topicName0);
+                assertEquals(2, topicDescription.partitions().size());
+                assertEquals(0, topicDescription.partitions().get(0));
+                topicDescription = topicDescriptions.get(topicName1);
+                assertEquals(1, topicDescription.partitions().size());
+            } catch (Exception e) {
+                fail("describe using DescribeTopics API should not fail", e);
+            }
         }
     }
 

@@ -117,7 +117,7 @@ class KafkaApis(val requestChannel: RequestChannel,
   val requestHelper = new RequestHandlerHelper(requestChannel, quotas, time)
   val aclApis = new AclApis(authHelper, authorizer, requestHelper, "broker", config)
   val configManager = new ConfigAdminManager(brokerId, config, configRepository)
-  val partitionRequestLimit = 2000
+  val partitionRequestLimit = 2
 
   def close(): Unit = {
     aclApis.close()
