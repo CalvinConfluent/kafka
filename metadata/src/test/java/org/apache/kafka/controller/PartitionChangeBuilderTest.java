@@ -699,7 +699,7 @@ public class PartitionChangeBuilderTest {
         PartitionChangeBuilder builder = new PartitionChangeBuilder(partition, topicId, 0, r -> r != 3, metadataVersionForPartitionChangeRecordVersion(version), 3)
             .setElection(Election.PREFERRED)
             .setEligibleLeaderReplicasEnabled(isElrEnabled(version))
-            .setLastKnownLeaderEnabled(false);
+            .setUseLastKnownLeaderInBalancedRecovery(false);
 
         // Update ISR to {1, 2}
         builder.setTargetIsrWithBrokerStates(AlterPartitionRequest.newIsrToSimpleNewIsrWithBrokerEpochs(Arrays.asList(1, 2)));
@@ -746,7 +746,7 @@ public class PartitionChangeBuilderTest {
         PartitionChangeBuilder builder = new PartitionChangeBuilder(partition, topicId, 0, r -> r != 3, metadataVersionForPartitionChangeRecordVersion(version), 3)
             .setElection(Election.PREFERRED)
             .setEligibleLeaderReplicasEnabled(isElrEnabled(version))
-            .setLastKnownLeaderEnabled(false);
+            .setUseLastKnownLeaderInBalancedRecovery(false);
 
         builder.setTargetIsrWithBrokerStates(AlterPartitionRequest.newIsrToSimpleNewIsrWithBrokerEpochs(Arrays.asList(1, 2, 3)));
         PartitionChangeRecord record = new PartitionChangeRecord()
@@ -787,7 +787,7 @@ public class PartitionChangeBuilderTest {
         PartitionChangeBuilder builder = new PartitionChangeBuilder(partition, topicId, 0, r -> r != 3, metadataVersionForPartitionChangeRecordVersion(version), 3)
             .setElection(Election.PREFERRED)
             .setEligibleLeaderReplicasEnabled(isElrEnabled(version))
-            .setLastKnownLeaderEnabled(false);
+            .setUseLastKnownLeaderInBalancedRecovery(false);
 
         builder.setTargetIsrWithBrokerStates(AlterPartitionRequest.newIsrToSimpleNewIsrWithBrokerEpochs(Arrays.asList(1, 4)));
         PartitionChangeRecord record = new PartitionChangeRecord()
@@ -834,7 +834,7 @@ public class PartitionChangeBuilderTest {
         PartitionChangeBuilder builder = new PartitionChangeBuilder(partition, topicId, 0, r -> r != 3, metadataVersionForPartitionChangeRecordVersion(version), 3)
             .setElection(Election.PREFERRED)
             .setEligibleLeaderReplicasEnabled(isElrEnabled(version))
-            .setLastKnownLeaderEnabled(false);
+            .setUseLastKnownLeaderInBalancedRecovery(false);
 
         builder.setUncleanShutdownReplicas(Arrays.asList(3));
 
@@ -884,7 +884,7 @@ public class PartitionChangeBuilderTest {
         PartitionChangeBuilder builder = new PartitionChangeBuilder(partition, topicId, 0, r -> r != 1, metadataVersionForPartitionChangeRecordVersion(version), 3)
             .setElection(Election.PREFERRED)
             .setEligibleLeaderReplicasEnabled(isElrEnabled(version))
-            .setLastKnownLeaderEnabled(lastKnownLeaderEnabled);
+            .setUseLastKnownLeaderInBalancedRecovery(lastKnownLeaderEnabled);
 
         builder.setTargetIsr(Collections.emptyList());
 
@@ -925,7 +925,7 @@ public class PartitionChangeBuilderTest {
         PartitionChangeBuilder builder = new PartitionChangeBuilder(partition, topicId, 0, r -> false, metadataVersionForPartitionChangeRecordVersion(version), 3)
             .setElection(Election.PREFERRED)
             .setEligibleLeaderReplicasEnabled(true)
-            .setLastKnownLeaderEnabled(lastKnownLeaderEnabled);
+            .setUseLastKnownLeaderInBalancedRecovery(lastKnownLeaderEnabled);
 
         builder.setTargetIsr(Collections.emptyList());
 
@@ -973,7 +973,7 @@ public class PartitionChangeBuilderTest {
 
         PartitionChangeBuilder builder = new PartitionChangeBuilder(partition, topicId, 0, r -> true, metadataVersionForPartitionChangeRecordVersion(version), 3)
             .setElection(Election.PREFERRED)
-            .setLastKnownLeaderEnabled(true)
+            .setUseLastKnownLeaderInBalancedRecovery(true)
             .setEligibleLeaderReplicasEnabled(true);
 
         builder.setTargetIsr(Collections.emptyList());
@@ -1013,7 +1013,7 @@ public class PartitionChangeBuilderTest {
         PartitionChangeBuilder builder = new PartitionChangeBuilder(partition, topicId, 0, r -> r != 3, metadataVersionForPartitionChangeRecordVersion(version), 3)
             .setElection(Election.PREFERRED)
             .setEligibleLeaderReplicasEnabled(true)
-            .setLastKnownLeaderEnabled(true);
+            .setUseLastKnownLeaderInBalancedRecovery(true);
 
         builder.setTargetIsr(Collections.emptyList());
 
