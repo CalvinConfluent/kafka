@@ -1881,6 +1881,7 @@ public final class QuorumController implements Controller {
             setFeatureControl(featureControl).
             build();
         this.clusterControl.setReplicationControlManager(replicationControl);
+        this.configurationControl.setReplicationControl(replicationControl);
         this.scramControlManager = new ScramControlManager.Builder().
             setLogContext(logContext).
             setSnapshotRegistry(snapshotRegistry).

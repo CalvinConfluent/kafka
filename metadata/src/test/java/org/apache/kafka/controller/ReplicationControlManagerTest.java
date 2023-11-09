@@ -976,6 +976,39 @@ public class ReplicationControlManagerTest {
     }
 
     @Test
+    public void testEligibleLeaderReplicas_OnMinIsrConfigChange() throws Exception {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().setIsElrEnabled(true).build();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        ctx.registerBrokers(0, 1, 2, 3);
+        ctx.unfenceBrokers(0, 1, 2, 3);
+        CreatableTopicResult createTopicResult = ctx.createTestTopic("foo",
+                new int[][] {new int[] {0, 1, 2, 3}});
+
+        TopicIdPartition topicIdPartition = new TopicIdPartition(createTopicResult.topicId(), 0);
+        assertEquals(OptionalInt.of(0), ctx.currentLeader(topicIdPartition));
+        ctx.alterTopicConfig("foo", TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "3");
+
+        ctx.fenceBrokers(Utils.mkSet(2, 3));
+
+        PartitionRegistration partition = replicationControl.getPartition(topicIdPartition.topicId(), topicIdPartition.partitionId());
+        assertTrue(Arrays.equals(new int[]{3}, partition.elr), partition.toString());
+        assertTrue(Arrays.equals(new int[]{}, partition.lastKnownElr), partition.toString());
+
+        String expectResult = "[ApiMessageAndVersion(PartitionChangeRecord(partitionId=0," +
+            " topicId=" + createTopicResult.topicId() + ", isr=null, leader=-2, replicas=null, removingReplicas=null," +
+            " addingReplicas=null, leaderRecoveryState=-1, eligibleLeaderReplicas=[], lastKnownELR=null," +
+            " directories=null) at version 1)]";
+
+        // Update all topics.
+        List<ApiMessageAndVersion> records = replicationControl.maybeUpdatePartitionElrWhenMinIsrConfigChanges(topic -> "2");
+        assertEquals(expectResult, records.toString());
+
+        // Update all topics with larger MinIsr.
+        records = replicationControl.maybeUpdatePartitionElrWhenMinIsrConfigChanges(topic -> "4");
+        assertTrue(records.isEmpty());
+    }
+
+    @Test
     public void testEligibleLeaderReplicas_DeleteTopic() throws Exception {
         ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().setIsElrEnabled(true).build();
         ReplicationControlManager replicationControl = ctx.replicationControl;
@@ -1023,7 +1056,7 @@ public class ReplicationControlManagerTest {
         TopicIdPartition topicIdPartition = new TopicIdPartition(createTopicResult.topicId(), 0);
         assertEquals(OptionalInt.of(0), ctx.currentLeader(topicIdPartition));
         ctx.alterTopicConfig("foo", TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "5");
-        assertEquals(3, replicationControl.getTopicEffectiveMinIsr("foo"));
+        assertEquals(3, replicationControl.getTopicEffectiveMinIsr("foo", Optional.empty()));
     }
 
     @Test

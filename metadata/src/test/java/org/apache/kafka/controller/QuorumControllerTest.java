@@ -43,6 +43,7 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.errors.BrokerIdNotRegisteredException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.message.RequestHeaderData;
@@ -152,6 +153,7 @@ import static org.apache.kafka.common.config.ConfigResource.Type.TOPIC;
 import static org.apache.kafka.controller.ConfigurationControlManagerTest.BROKER0;
 import static org.apache.kafka.controller.ConfigurationControlManagerTest.SCHEMA;
 import static org.apache.kafka.controller.ConfigurationControlManagerTest.entry;
+import static org.apache.kafka.controller.ConfigurationControlManagerTest.toMap;
 import static org.apache.kafka.controller.ControllerRequestContextUtil.ANONYMOUS_CONTEXT;
 import static org.apache.kafka.controller.ControllerRequestContextUtil.anonymousContextFor;
 import static org.apache.kafka.controller.QuorumControllerIntegrationTestUtils.brokerFeatures;
@@ -487,6 +489,113 @@ public class QuorumControllerTest {
             assertEquals(0, partition.elr.length, partition.toString());
             assertEquals(0, partition.lastKnownElr.length, partition.toString());
             assertEquals(brokerToBeTheLeader, partition.leader, partition.toString());
+        }
+    }
+
+    @Test
+    public void testMinIsrUpdateWithElr() throws Throwable {
+        List<Integer> allBrokers = Arrays.asList(1, 2, 3);
+        List<Integer> brokersToKeepUnfenced = Arrays.asList(1);
+        List<Integer> brokersToFence = Arrays.asList(2, 3);
+        short replicationFactor = (short) allBrokers.size();
+        long sessionTimeoutMillis = 500;
+
+        try (
+            LocalLogManagerTestEnv logEnv = new LocalLogManagerTestEnv.Builder(1).
+                build();
+            QuorumControllerTestEnv controlEnv = new QuorumControllerTestEnv.Builder(logEnv).
+                setControllerBuilderInitializer(controllerBuilder -> {
+                    controllerBuilder.setConfigSchema(SCHEMA);
+                }).
+                setSessionTimeoutMillis(OptionalLong.of(sessionTimeoutMillis)).
+
+                setBootstrapMetadata(BootstrapMetadata.fromVersion(MetadataVersion.IBP_3_7_IV1, "test-provided bootstrap ELR enabled")).
+                build()
+        ) {
+            ListenerCollection listeners = new ListenerCollection();
+            listeners.add(new Listener().setName("PLAINTEXT").setHost("localhost").setPort(9092));
+            QuorumController active = controlEnv.activeController();
+            Map<Integer, Long> brokerEpochs = new HashMap<>();
+
+            for (Integer brokerId : allBrokers) {
+                CompletableFuture<BrokerRegistrationReply> reply = active.registerBroker(
+                    anonymousContextFor(ApiKeys.BROKER_REGISTRATION),
+                    new BrokerRegistrationRequestData().
+                        setBrokerId(brokerId).
+                        setClusterId(active.clusterId()).
+                        setFeatures(brokerFeatures(MetadataVersion.IBP_3_0_IV1, MetadataVersion.IBP_3_7_IV1)).
+                        setIncarnationId(Uuid.randomUuid()).
+                        setListeners(listeners));
+                brokerEpochs.put(brokerId, reply.get().epoch());
+            }
+
+            // Brokers are only registered and should still be fenced
+            allBrokers.forEach(brokerId -> {
+                assertFalse(active.clusterControl().isUnfenced(brokerId),
+                        "Broker " + brokerId + " should have been fenced");
+            });
+
+            // Unfence all brokers and create a topic foo
+            sendBrokerHeartbeat(active, allBrokers, brokerEpochs);
+            CreateTopicsRequestData createTopicsRequestData = new CreateTopicsRequestData().setTopics(
+                new CreatableTopicCollection(Collections.singleton(
+                    new CreatableTopic().setName("foo").setNumPartitions(1).
+                        setReplicationFactor(replicationFactor)).iterator()));
+            CreateTopicsResponseData createTopicsResponseData = active.createTopics(
+                ANONYMOUS_CONTEXT, createTopicsRequestData,
+                Collections.singleton("foo")).get();
+            assertEquals(Errors.NONE, Errors.forCode(createTopicsResponseData.topics().find("foo").errorCode()));
+            Uuid topicIdFoo = createTopicsResponseData.topics().find("foo").topicId();
+            ConfigRecord configRecord = new ConfigRecord()
+                .setResourceType(ConfigResource.Type.TOPIC.id())
+                .setResourceName("foo")
+                .setName(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG)
+                .setValue("2");
+            RecordTestUtils.replayAll(active.configurationControl(), singletonList(new ApiMessageAndVersion(configRecord, (short) 0)));
+
+            // Fence brokers
+            TestUtils.waitForCondition(() -> {
+                    sendBrokerHeartbeat(active, brokersToKeepUnfenced, brokerEpochs);
+                    for (Integer brokerId : brokersToFence) {
+                        if (active.clusterControl().isUnfenced(brokerId)) {
+                            return false;
+                        }
+                    }
+                return true;
+                }, sessionTimeoutMillis * 3,
+                "Fencing of brokers did not process within expected time"
+            );
+
+            // Send another heartbeat to the brokers we want to keep alive
+            sendBrokerHeartbeat(active, brokersToKeepUnfenced, brokerEpochs);
+
+            // At this point only the brokers we want fenced should be fenced.
+            brokersToKeepUnfenced.forEach(brokerId -> {
+                assertTrue(active.clusterControl().isUnfenced(brokerId),
+                        "Broker " + brokerId + " should have been unfenced");
+            });
+            brokersToFence.forEach(brokerId -> {
+                assertFalse(active.clusterControl().isUnfenced(brokerId),
+                        "Broker " + brokerId + " should have been fenced");
+            });
+
+            // Verify the isr and elr for the topic partition
+            PartitionRegistration partition = active.replicationControl().getPartition(topicIdFoo, 0);
+            assertArrayEquals(new int[]{1}, partition.isr, partition.toString());
+
+            // The ELR set is not determined.
+            assertEquals(1, partition.elr.length, partition.toString());
+
+            ControllerResult<Map<ConfigResource, ApiError>> result = active.configurationControl().incrementalAlterConfigs(toMap(
+                entry(new ConfigResource(TOPIC, "foo"), toMap(entry(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, entry(SET, "1"))))),
+                true);
+            assertEquals(2, result.records().size(), result.records().toString());
+            RecordTestUtils.replayAll(active.configurationControl(), singletonList(result.records().get(0)));
+            RecordTestUtils.replayAll(active.replicationControl(), singletonList(result.records().get(1)));
+
+            partition = active.replicationControl().getPartition(topicIdFoo, 0);
+            assertEquals(0, partition.elr.length, partition.toString());
+            assertArrayEquals(new int[]{1}, partition.isr, partition.toString());
         }
     }
 

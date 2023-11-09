@@ -24,6 +24,7 @@ import org.apache.kafka.timeline.TimelineHashMap;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 
 import static org.apache.kafka.metadata.Replicas.NONE;
@@ -155,6 +156,27 @@ public class BrokersToElrs {
         Map<Uuid, int[]> topicMap = elrMembers.get(brokerId);
         if (topicMap == null) {
             topicMap = Collections.emptyMap();
+        }
+        return new BrokersToIsrs.PartitionsOnReplicaIterator(topicMap, false);
+    }
+
+    BrokersToIsrs.PartitionsOnReplicaIterator partitionsWithElr() {
+        Map<Uuid, int[]> topicMap = new HashMap<>();
+        for (Map<Uuid, int[]> map : elrMembers.values()) {
+            if (map != null) {
+                topicMap.putAll(map);
+            }
+        }
+        return new BrokersToIsrs.PartitionsOnReplicaIterator(topicMap, false);
+    }
+
+    BrokersToIsrs.PartitionsOnReplicaIterator partitionsWithElr(Uuid topicId) {
+        Map<Uuid, int[]> topicMap = new HashMap<>();
+        for (Map<Uuid, int[]> map : elrMembers.values()) {
+            if (map != null && map.containsKey(topicId)) {
+                topicMap.put(topicId, map.get(topicId));
+                break;
+            }
         }
         return new BrokersToIsrs.PartitionsOnReplicaIterator(topicMap, false);
     }

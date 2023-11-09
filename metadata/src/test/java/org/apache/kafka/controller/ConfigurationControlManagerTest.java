@@ -20,6 +20,7 @@ package org.apache.kafka.controller;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigResource;
+import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.errors.PolicyViolationException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.metadata.ConfigRecord;
@@ -46,6 +47,7 @@ import java.util.function.Consumer;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.mockito.ArgumentMatchers;
 
 import static java.util.Arrays.asList;
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.APPEND;
@@ -58,6 +60,9 @@ import static org.apache.kafka.common.metadata.MetadataRecordType.CONFIG_RECORD;
 import static org.apache.kafka.server.config.ConfigSynonym.HOURS_TO_MILLISECONDS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 
 @Timeout(value = 40)
@@ -102,7 +107,7 @@ public class ConfigurationControlManagerTest {
     }
 
     @SuppressWarnings("unchecked")
-    private static <A, B> Map<A, B> toMap(Entry... entries) {
+    static <A, B> Map<A, B> toMap(Entry... entries) {
         Map<A, B> map = new LinkedHashMap<>();
         for (Entry<A, B> entry : entries) {
             map.put(entry.getKey(), entry.getValue());
@@ -194,6 +199,31 @@ public class ConfigurationControlManagerTest {
                         setName("abc").setValue(null), CONFIG_RECORD.highestSupportedVersion())),
                 ApiError.NONE),
             manager.incrementalAlterConfig(MYTOPIC, toMap(entry("abc", entry(DELETE, "xyz"))), true));
+    }
+
+    @Test
+    public void testIncrementalAlterConfigsOnMinIsrUpdate() {
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setKafkaConfigSchema(SCHEMA).
+            build();
+        ReplicationControlManager replicationControlManager = mock(ReplicationControlManager.class);
+        manager.setReplicationControl(replicationControlManager);
+
+        manager.incrementalAlterConfigs(toMap(entry(BROKER0, toMap(
+            entry(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, entry(SET, "2"))))),
+            true);
+
+        manager.incrementalAlterConfigs(toMap(entry(MYTOPIC, toMap(
+            entry(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, entry(SET, "2"))))),
+            true);
+
+        manager.incrementalAlterConfigs(toMap(entry(new ConfigResource(BROKER, ""), toMap(
+            entry(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, entry(SET, "2"))))),
+            true);
+        verify(replicationControlManager, times(3)).maybeUpdatePartitionElrWhenMinIsrConfigChanges(ArgumentMatchers.any());
+
+        // No actual update should happen.
+        assertTrue(manager.getTopicConfig(MYTOPIC.name(), TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG) == null);
     }
 
     @Test
@@ -367,17 +397,19 @@ public class ConfigurationControlManagerTest {
             setKafkaConfigSchema(SCHEMA).
             setAlterConfigPolicy(Optional.of(new CheckForNullValuesPolicy())).
             build();
+        ReplicationControlManager replicationControlManager = mock(ReplicationControlManager.class);
+        manager.setReplicationControl(replicationControlManager);
         List<ApiMessageAndVersion> expectedRecords1 = asList(
             new ApiMessageAndVersion(new ConfigRecord().
                 setResourceType(TOPIC.id()).setResourceName("mytopic").
                 setName("abc").setValue("456"), CONFIG_RECORD.highestSupportedVersion()),
             new ApiMessageAndVersion(new ConfigRecord().
                 setResourceType(TOPIC.id()).setResourceName("mytopic").
-                setName("def").setValue("901"), CONFIG_RECORD.highestSupportedVersion()));
+                setName(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG).setValue("901"), CONFIG_RECORD.highestSupportedVersion()));
         assertEquals(ControllerResult.atomicOf(
                 expectedRecords1, toMap(entry(MYTOPIC, ApiError.NONE))),
             manager.legacyAlterConfigs(
-                toMap(entry(MYTOPIC, toMap(entry("abc", "456"), entry("def", "901")))),
+                toMap(entry(MYTOPIC, toMap(entry("abc", "456"), entry(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "901")))),
                 true));
         for (ApiMessageAndVersion message : expectedRecords1) {
             manager.replay((ConfigRecord) message.message());
@@ -391,7 +423,8 @@ public class ConfigurationControlManagerTest {
                     .setValue(null),
                 CONFIG_RECORD.highestSupportedVersion())),
             toMap(entry(MYTOPIC, ApiError.NONE))),
-            manager.legacyAlterConfigs(toMap(entry(MYTOPIC, toMap(entry("def", "901")))),
+            manager.legacyAlterConfigs(toMap(entry(MYTOPIC, toMap(entry(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "901")))),
                 true));
+        verify(replicationControlManager).maybeUpdatePartitionElrWhenMinIsrConfigChanges(ArgumentMatchers.any());
     }
 }
