@@ -74,6 +74,7 @@ import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.common.utils.annotation.ApiKeyVersionsSource;
 import org.apache.kafka.controller.BrokerHeartbeatManager.BrokerHeartbeatState;
 import org.apache.kafka.controller.ReplicationControlManager.KRaftClusterDescriber;
+import org.apache.kafka.controller.metrics.QuorumControllerMetrics;
 import org.apache.kafka.metadata.BrokerHeartbeatReply;
 import org.apache.kafka.metadata.BrokerRegistration;
 import org.apache.kafka.metadata.BrokerRegistrationInControlledShutdownChange;
@@ -203,6 +204,7 @@ public class ReplicationControlManagerTest {
         final MockRandom random = new MockRandom();
         final FeatureControlManager featureControl;
         final ClusterControlManager clusterControl;
+        final QuorumControllerMetrics controllerMetrics;
         final ConfigurationControlManager configurationControl = new ConfigurationControlManager.Builder().
             setSnapshotRegistry(snapshotRegistry).
             build();
@@ -236,6 +238,7 @@ public class ReplicationControlManagerTest {
                 setReplicaPlacer(new StripedReplicaPlacer(random)).
                 setFeatureControlManager(featureControl).
                 build();
+            this.controllerMetrics = new QuorumControllerMetrics(Optional.empty(), time, false);
 
             this.replicationControl = new ReplicationControlManager.Builder().
                 setSnapshotRegistry(snapshotRegistry).
@@ -246,6 +249,7 @@ public class ReplicationControlManagerTest {
                 setCreateTopicPolicy(createTopicPolicy).
                 setFeatureControl(featureControl).
                 setEligibleLeaderReplicasEnabled(isElrEnabled).
+                setControllerMetrics(controllerMetrics).
                 build();
             clusterControl.activate();
         }
@@ -934,6 +938,55 @@ public class ReplicationControlManagerTest {
         partition = replicationControl.getPartition(topicIdPartition.topicId(), topicIdPartition.partitionId());
         assertTrue(Arrays.equals(new int[]{}, partition.elr), partition.toString());
         assertTrue(Arrays.equals(new int[]{}, partition.lastKnownElr), partition.toString());
+    }
+
+    @Test
+    public void testUnderMinIsrMetric() throws Exception {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().setIsElrEnabled(true).build();
+        ReplicationControlManager replicationControl = ctx.replicationControl;
+        ctx.registerBrokers(0, 1, 2);
+        ctx.unfenceBrokers(0, 1, 2);
+        CreatableTopicResult createTopicResult = ctx.createTestTopic("foo",
+            new int[][] {new int[] {0, 1, 2}});
+
+        TopicIdPartition topicIdPartition = new TopicIdPartition(createTopicResult.topicId(), 0);
+        assertEquals(OptionalInt.of(0), ctx.currentLeader(topicIdPartition));
+        long brokerEpoch = ctx.currentBrokerEpoch(0);
+        ctx.alterTopicConfig("foo", TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "2");
+
+        // Change ISR to {0}.
+        PartitionData shrinkIsrRequest = newAlterPartition(
+            replicationControl, topicIdPartition, isrWithDefaultEpoch(0), LeaderRecoveryState.RECOVERED);
+
+        ControllerResult<AlterPartitionResponseData> shrinkIsrResult = sendAlterPartition(
+            replicationControl, 0, brokerEpoch, topicIdPartition.topicId(), shrinkIsrRequest);
+        AlterPartitionResponseData.PartitionData shrinkIsrResponse = assertAlterPartitionResponse(
+            shrinkIsrResult, topicIdPartition, NONE);
+        assertConsistentAlterPartitionResponse(replicationControl, topicIdPartition, shrinkIsrResponse);
+        assertEquals(1, ctx.controllerMetrics.globalUnderMinIsrPartitionCount());
+
+        // Expand the ISR to above min ISR.
+        PartitionData expandIsrRequest = newAlterPartition(
+            replicationControl, topicIdPartition, isrWithDefaultEpoch(0, 1), LeaderRecoveryState.RECOVERED);
+        ControllerResult<AlterPartitionResponseData> expandIsrResult = sendAlterPartition(
+            replicationControl, 0, brokerEpoch, topicIdPartition.topicId(), expandIsrRequest);
+        AlterPartitionResponseData.PartitionData expandIsrResponse = assertAlterPartitionResponse(
+            expandIsrResult, topicIdPartition, NONE);
+        assertConsistentAlterPartitionResponse(replicationControl, topicIdPartition, expandIsrResponse);
+        assertEquals(0, ctx.controllerMetrics.globalUnderMinIsrPartitionCount());
+
+        // Shrink again, then delete the partition.
+        shrinkIsrRequest = newAlterPartition(
+            replicationControl, topicIdPartition, isrWithDefaultEpoch(0), LeaderRecoveryState.RECOVERED);
+        shrinkIsrResult = sendAlterPartition(
+            replicationControl, 0, brokerEpoch, topicIdPartition.topicId(), shrinkIsrRequest);
+        shrinkIsrResponse = assertAlterPartitionResponse(
+            shrinkIsrResult, topicIdPartition, NONE);
+        assertConsistentAlterPartitionResponse(replicationControl, topicIdPartition, shrinkIsrResponse);
+        assertEquals(1, ctx.controllerMetrics.globalUnderMinIsrPartitionCount());
+
+        ctx.deleteTopic(anonymousContextFor(ApiKeys.DELETE_TOPICS), createTopicResult.topicId());
+        assertEquals(0, ctx.controllerMetrics.globalUnderMinIsrPartitionCount());
     }
 
     @Test

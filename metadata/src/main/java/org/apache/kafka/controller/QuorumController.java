@@ -1879,6 +1879,7 @@ public final class QuorumController implements Controller {
             setClusterControl(clusterControl).
             setCreateTopicPolicy(createTopicPolicy).
             setFeatureControl(featureControl).
+            setControllerMetrics(controllerMetrics).
             build();
         this.scramControlManager = new ScramControlManager.Builder().
             setLogContext(logContext).

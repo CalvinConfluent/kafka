@@ -26,6 +26,7 @@ import org.apache.kafka.server.metrics.KafkaYammerMetrics;
 
 import java.util.Arrays;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
@@ -66,6 +67,8 @@ public class QuorumControllerMetrics implements AutoCloseable {
         "KafkaController", "EventQueueOperationsTimedOutCount");
     private final static MetricName NEW_ACTIVE_CONTROLLERS_COUNT = getMetricName(
         "KafkaController", "NewActiveControllersCount");
+    private final static MetricName GLOBAL_UNDER_MIN_ISR_PARTITION_COUNT = getMetricName(
+        "KafkaController", "GlobalUnderMinIsrPartitionCount");
 
     private final Optional<MetricsRegistry> registry;
     private volatile boolean active;
@@ -82,6 +85,7 @@ public class QuorumControllerMetrics implements AutoCloseable {
     private final AtomicLong operationsStarted = new AtomicLong(0);
     private final AtomicLong operationsTimedOut = new AtomicLong(0);
     private final AtomicLong newActiveControllers = new AtomicLong(0);
+    private final AtomicInteger globalUnderMinIsrPartitionCount = new AtomicInteger(0);
 
     private Consumer<Long> newHistogram(MetricName name, boolean biased) {
         if (registry.isPresent()) {
@@ -153,6 +157,12 @@ public class QuorumControllerMetrics implements AutoCloseable {
             @Override
             public Long value() {
                 return newActiveControllers();
+            }
+        }));
+        registry.ifPresent(r -> r.newGauge(GLOBAL_UNDER_MIN_ISR_PARTITION_COUNT, new Gauge<Integer>() {
+            @Override
+            public Integer value() {
+                return globalUnderMinIsrPartitionCount();
             }
         }));
 
@@ -262,6 +272,14 @@ public class QuorumControllerMetrics implements AutoCloseable {
         return newActiveControllers.get();
     }
 
+    public void setGlobalUnderMinIsrPartitionCount(int minIsrCount) {
+        globalUnderMinIsrPartitionCount.set(minIsrCount);
+    }
+
+    public int globalUnderMinIsrPartitionCount() {
+        return globalUnderMinIsrPartitionCount.get();
+    }
+
     @Override
     public void close() {
         registry.ifPresent(r -> Arrays.asList(
@@ -278,7 +296,8 @@ public class QuorumControllerMetrics implements AutoCloseable {
             NEW_ACTIVE_CONTROLLERS_COUNT,
             ZK_WRITE_BEHIND_LAG,
             ZK_WRITE_SNAPSHOT_TIME_MS,
-            ZK_WRITE_DELTA_TIME_MS
+            ZK_WRITE_DELTA_TIME_MS,
+            GLOBAL_UNDER_MIN_ISR_PARTITION_COUNT
         ).forEach(r::removeMetric));
     }
 

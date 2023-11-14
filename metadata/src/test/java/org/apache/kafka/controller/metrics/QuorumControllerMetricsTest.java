@@ -56,7 +56,8 @@ public class QuorumControllerMetricsTest {
                     "kafka.controller:type=KafkaController,name=LastAppliedRecordTimestamp",
                     "kafka.controller:type=KafkaController,name=LastCommittedRecordOffset",
                     "kafka.controller:type=KafkaController,name=NewActiveControllersCount",
-                    "kafka.controller:type=KafkaController,name=TimedOutBrokerHeartbeatCount"
+                    "kafka.controller:type=KafkaController,name=TimedOutBrokerHeartbeatCount",
+                    "kafka.controller:type=KafkaController,name=GlobalUnderMinIsrPartitionCount"
                 ));
                 if (inMigration) {
                     expected.add("kafka.controller:type=KafkaController,name=ZkWriteBehindLag");

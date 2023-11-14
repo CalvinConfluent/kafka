@@ -77,6 +77,7 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.AlterPartitionRequest;
 import org.apache.kafka.common.requests.ApiError;
 import org.apache.kafka.common.utils.LogContext;
+import org.apache.kafka.controller.metrics.QuorumControllerMetrics;
 import org.apache.kafka.image.writer.ImageWriterOptions;
 import org.apache.kafka.metadata.BrokerHeartbeatReply;
 import org.apache.kafka.metadata.BrokerRegistration;
@@ -160,6 +161,7 @@ public class ReplicationControlManager {
         private Optional<CreateTopicPolicy> createTopicPolicy = Optional.empty();
         private FeatureControlManager featureControl = null;
         private boolean eligibleLeaderReplicasEnabled = false;
+        private QuorumControllerMetrics controllerMetrics = null;
 
         Builder setSnapshotRegistry(SnapshotRegistry snapshotRegistry) {
             this.snapshotRegistry = snapshotRegistry;
@@ -211,6 +213,11 @@ public class ReplicationControlManager {
             return this;
         }
 
+        Builder setControllerMetrics(QuorumControllerMetrics controllerMetrics) {
+            this.controllerMetrics = controllerMetrics;
+            return this;
+        }
+
         public Builder setFeatureControl(FeatureControlManager featureControl) {
             this.featureControl = featureControl;
             return this;
@@ -237,7 +244,8 @@ public class ReplicationControlManager {
                 configurationControl,
                 clusterControl,
                 createTopicPolicy,
-                featureControl);
+                featureControl,
+                controllerMetrics);
         }
     }
 
@@ -374,6 +382,16 @@ public class ReplicationControlManager {
     private final TimelineHashSet<TopicIdPartition> imbalancedPartitions;
 
     /**
+     * The metrics for the controller.
+     */
+    private final QuorumControllerMetrics controllerMetrics;
+
+    /**
+     * The set of topic partitions for which is under min ISR.
+     */
+    private final TimelineHashSet<TopicIdPartition> underMinIsrPartitions;
+
+    /**
      * A ClusterDescriber which supplies cluster information to our ReplicaPlacer.
      */
     final KRaftClusterDescriber clusterDescriber = new KRaftClusterDescriber();
@@ -389,7 +407,8 @@ public class ReplicationControlManager {
         ConfigurationControlManager configurationControl,
         ClusterControlManager clusterControl,
         Optional<CreateTopicPolicy> createTopicPolicy,
-        FeatureControlManager featureControl
+        FeatureControlManager featureControl,
+        QuorumControllerMetrics controllerMetrics
     ) {
         this.snapshotRegistry = snapshotRegistry;
         this.log = logContext.logger(ReplicationControlManager.class);
@@ -408,6 +427,8 @@ public class ReplicationControlManager {
         this.brokersToIsrs = new BrokersToIsrs(snapshotRegistry);
         this.reassigningTopics = new TimelineHashMap<>(snapshotRegistry, 0);
         this.imbalancedPartitions = new TimelineHashSet<>(snapshotRegistry, 0);
+        this.underMinIsrPartitions = new TimelineHashSet<>(snapshotRegistry, 0);
+        this.controllerMetrics = controllerMetrics;
     }
 
     public void replay(TopicRecord record) {
@@ -472,6 +493,13 @@ public class ReplicationControlManager {
         } else {
             imbalancedPartitions.add(new TopicIdPartition(record.topicId(), record.partitionId()));
         }
+
+        if (record.isr().size() < getTopicEffectiveMinIsr(topicInfo.name())) {
+            underMinIsrPartitions.add(new TopicIdPartition(record.topicId(), record.partitionId()));
+        } else {
+            underMinIsrPartitions.remove(new TopicIdPartition(record.topicId(), record.partitionId()));
+        }
+        controllerMetrics.setGlobalUnderMinIsrPartitionCount(underMinIsrPartitions.size());
     }
 
     private void updateReassigningTopicsIfNeeded(Uuid topicId, int partitionId,
@@ -520,6 +548,13 @@ public class ReplicationControlManager {
             imbalancedPartitions.add(new TopicIdPartition(record.topicId(), record.partitionId()));
         }
 
+        if (record.isr() != null && record.isr().size() < getTopicEffectiveMinIsr(topicInfo.name())) {
+            underMinIsrPartitions.add(new TopicIdPartition(record.topicId(), record.partitionId()));
+        } else {
+            underMinIsrPartitions.remove(new TopicIdPartition(record.topicId(), record.partitionId()));
+        }
+        controllerMetrics.setGlobalUnderMinIsrPartitionCount(underMinIsrPartitions.size());
+
         if (record.removingReplicas() != null || record.addingReplicas() != null) {
             log.info("Replayed partition assignment change {} for topic {}", record, topicInfo.name);
         } else if (log.isDebugEnabled()) {
@@ -560,7 +595,9 @@ public class ReplicationControlManager {
             }
 
             imbalancedPartitions.remove(new TopicIdPartition(record.topicId(), partitionId));
+            underMinIsrPartitions.remove(new TopicIdPartition(record.topicId(), partitionId));
         }
+        controllerMetrics.setGlobalUnderMinIsrPartitionCount(underMinIsrPartitions.size());
         brokersToIsrs.removeTopicEntryForBroker(topic.id, NO_LEADER);
 
         log.info("Replayed RemoveTopicRecord for topic {} with ID {}.", topic.name, record.topicId());
