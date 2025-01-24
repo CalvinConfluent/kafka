@@ -23,6 +23,7 @@ import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.common.requests.FetchResponse
 import org.apache.kafka.server.common.{DirectoryEventHandler, OffsetAndEpoch, TopicIdPartition}
 import org.apache.kafka.storage.internals.log.{LogAppendInfo, LogStartOffsetIncrementReason}
+import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 
 import java.util.concurrent.ConcurrentHashMap
 import scala.collection.{Map, Set}
@@ -40,7 +41,7 @@ class ReplicaAlterLogDirsThread(name: String,
                                 clientId = name,
                                 leader = leader,
                                 failedPartitions,
-                                fetchTierStateMachine = new ReplicaAlterLogDirsTierStateMachine(),
+                                fetchTierStateMachine = new TierStateMachine(leader, replicaMgr, true),
                                 fetchBackOffMs = fetchBackOffMs,
                                 isInterruptible = false,
                                 brokerTopicStats) {
@@ -116,7 +117,7 @@ class ReplicaAlterLogDirsThread(name: String,
 
   // Visible for testing
   private[server] def updateReassignmentState(topicPartition: TopicPartition, state: ReassignmentState): Unit = {
-    log.debug(s"Updating future replica ${topicPartition} reassignment state to ${state}")
+    log.debug(s"Updating future replica $topicPartition reassignment state to $state")
     promotionStates.put(topicPartition, promotionStates.get(topicPartition).withAssignment(state))
   }
 
@@ -167,8 +168,6 @@ class ReplicaAlterLogDirsThread(name: String,
       partitionMapLock.unlock()
     }
   }
-
-  override protected val isOffsetForLeaderEpochSupported: Boolean = true
 
   /**
    * Truncate the log for each partition based on current replica's returned epoch and offset.

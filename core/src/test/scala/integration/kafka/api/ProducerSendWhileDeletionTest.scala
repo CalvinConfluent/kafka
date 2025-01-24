@@ -16,12 +16,11 @@
  */
 package kafka.api
 
-import kafka.server.KafkaConfig
 import kafka.utils.TestUtils
 import org.apache.kafka.clients.admin.NewPartitionReassignment
 import org.apache.kafka.clients.producer.{ProducerConfig, ProducerRecord}
 import org.apache.kafka.common.TopicPartition
-import org.apache.kafka.server.config.ReplicationConfigs
+import org.apache.kafka.server.config.{ReplicationConfigs, ServerLogConfigs}
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
@@ -35,14 +34,15 @@ import scala.jdk.CollectionConverters._
 class ProducerSendWhileDeletionTest extends IntegrationTestHarness {
   val producerCount: Int = 1
   val brokerCount: Int = 2
+  val defaultLingerMs: Int = 5;
 
-  serverConfig.put(KafkaConfig.NumPartitionsProp, 2.toString)
+  serverConfig.put(ServerLogConfigs.NUM_PARTITIONS_CONFIG, 2.toString)
   serverConfig.put(ReplicationConfigs.DEFAULT_REPLICATION_FACTOR_CONFIG, 2.toString)
   serverConfig.put(ReplicationConfigs.AUTO_LEADER_REBALANCE_ENABLE_CONFIG, false.toString)
 
   producerConfig.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 5000L.toString)
   producerConfig.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 10000.toString)
-  producerConfig.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 10000.toString)
+  producerConfig.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, (10000 + defaultLingerMs).toString)
 
   /**
    * Tests that Producer gets self-recovered when a topic is deleted mid-way of produce.
@@ -51,7 +51,7 @@ class ProducerSendWhileDeletionTest extends IntegrationTestHarness {
    * succeed as long as the partition is included in the metadata.
    */
   @ParameterizedTest
-  @ValueSource(strings = Array("zk", "kraft"))
+  @ValueSource(strings = Array("kraft"))
   def testSendWithTopicDeletionMidWay(quorum: String): Unit = {
     val numRecords = 10
     val topic = "topic"
@@ -79,7 +79,7 @@ class ProducerSendWhileDeletionTest extends IntegrationTestHarness {
     deleteTopic(topic, listenerName)
 
     // Verify that the topic is deleted when no metadata request comes in
-    TestUtils.verifyTopicDeletion(zkClientOrNull, topic, 2, brokers)
+    TestUtils.verifyTopicDeletion(topic, 2, brokers)
 
     // Producer should be able to send messages even after topic gets deleted and auto-created
     assertEquals(topic, producer.send(new ProducerRecord(topic, null, "value".getBytes(StandardCharsets.UTF_8))).get.topic())
