@@ -245,6 +245,8 @@ class VerifiableProducer(KafkaPathResolverMixin, VerifiableClientMixin, Backgrou
         cmd += " --producer.config %s" % VerifiableProducer.CONFIG_FILE
 
         cmd += " 2>> %s | tee -a %s &" % (VerifiableProducer.STDOUT_CAPTURE, VerifiableProducer.STDOUT_CAPTURE)
+
+        self.logger.warn("------calvin debug:%s" % cmd)
         return cmd
 
     def kill_node(self, node, clean_shutdown=True, allow_fail=False):
